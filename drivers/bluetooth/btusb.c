@@ -3969,13 +3969,21 @@ static int btusb_probe(struct usb_interface *intf,
 	init_usb_anchor(&data->ctrl_anchor);
 	spin_lock_init(&data->rxlock);
 
-	if (id->driver_info & BTUSB_INTEL_NEW) {
-		data->recv_event = btusb_recv_event_intel;
-		data->recv_bulk = btusb_recv_bulk_intel;
-		set_bit(BTUSB_BOOTLOADER, &data->flags);
-	} else {
-		data->recv_event = hci_recv_frame;
-		data->recv_bulk = btusb_recv_bulk;
+	data->recv_event = hci_recv_frame;
+	data->recv_bulk = btusb_recv_bulk;
+
+	if (id->idVendor == 0x8087) {
+		switch (id->idProduct) {
+		case 0x0025:
+		case 0x0026:
+		case 0x0029:
+		case 0x0a2b:
+		case 0x0aaa:
+			data->recv_event = btusb_recv_event_intel;
+			data->recv_bulk = btusb_recv_bulk_intel;
+			set_bit(BTUSB_BOOTLOADER, &data->flags);
+			break;
+		}
 	}
 
 	hdev = hci_alloc_dev();
@@ -4052,30 +4060,39 @@ static int btusb_probe(struct usb_interface *intf,
 		data->diag = usb_ifnum_to_if(data->udev, ifnum_base + 2);
 	}
 
-	if (id->driver_info & BTUSB_INTEL) {
-		hdev->manufacturer = 2;
-		hdev->setup = btusb_setup_intel;
-		hdev->shutdown = btusb_shutdown_intel;
-		hdev->set_diag = btintel_set_diag_mfg;
-		hdev->set_bdaddr = btintel_set_bdaddr;
-		hdev->cmd_timeout = btusb_intel_cmd_timeout;
-		set_bit(HCI_QUIRK_STRICT_DUPLICATE_FILTER, &hdev->quirks);
-		set_bit(HCI_QUIRK_SIMULTANEOUS_DISCOVERY, &hdev->quirks);
-		set_bit(HCI_QUIRK_NON_PERSISTENT_DIAG, &hdev->quirks);
-	}
-
-	if (id->driver_info & BTUSB_INTEL_NEW) {
-		hdev->manufacturer = 2;
-		hdev->send = btusb_send_frame_intel;
-		hdev->setup = btusb_setup_intel_new;
-		hdev->shutdown = btusb_shutdown_intel_new;
-		hdev->hw_error = btintel_hw_error;
-		hdev->set_diag = btintel_set_diag;
-		hdev->set_bdaddr = btintel_set_bdaddr;
-		hdev->cmd_timeout = btusb_intel_cmd_timeout;
-		set_bit(HCI_QUIRK_STRICT_DUPLICATE_FILTER, &hdev->quirks);
-		set_bit(HCI_QUIRK_SIMULTANEOUS_DISCOVERY, &hdev->quirks);
-		set_bit(HCI_QUIRK_NON_PERSISTENT_DIAG, &hdev->quirks);
+	if (id->idVendor == 0x8087) {
+		switch (id->idProduct) {
+		case 0x07dc:
+		case 0x0a2a:
+		case 0x0aa7:
+			hdev->manufacturer = 2;
+			hdev->setup = btusb_setup_intel;
+			hdev->shutdown = btusb_shutdown_intel;
+			hdev->set_diag = btintel_set_diag_mfg;
+			hdev->set_bdaddr = btintel_set_bdaddr;
+			hdev->cmd_timeout = btusb_intel_cmd_timeout;
+			set_bit(HCI_QUIRK_STRICT_DUPLICATE_FILTER, &hdev->quirks);
+			set_bit(HCI_QUIRK_SIMULTANEOUS_DISCOVERY, &hdev->quirks);
+			set_bit(HCI_QUIRK_NON_PERSISTENT_DIAG, &hdev->quirks);
+			break;
+		case 0x0025:
+		case 0x0026:
+		case 0x0029:
+		case 0x0a2b:
+		case 0x0aaa:
+			hdev->manufacturer = 2;
+			hdev->send = btusb_send_frame_intel;
+			hdev->setup = btusb_setup_intel_new;
+			hdev->shutdown = btusb_shutdown_intel_new;
+			hdev->hw_error = btintel_hw_error;
+			hdev->set_diag = btintel_set_diag;
+			hdev->set_bdaddr = btintel_set_bdaddr;
+			hdev->cmd_timeout = btusb_intel_cmd_timeout;
+			set_bit(HCI_QUIRK_STRICT_DUPLICATE_FILTER, &hdev->quirks);
+			set_bit(HCI_QUIRK_SIMULTANEOUS_DISCOVERY, &hdev->quirks);
+			set_bit(HCI_QUIRK_NON_PERSISTENT_DIAG, &hdev->quirks);
+			break;
+		}
 	}
 
 	if (id->driver_info & BTUSB_MARVELL)
