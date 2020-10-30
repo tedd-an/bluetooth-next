@@ -1,0 +1,34 @@
+name: CI
+
+on: [pull_request]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    name: CI for Pull Request
+    steps:
+    - name: Checkout the source code
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+        path: src
+
+    - name: Checkout the BlueZ source code
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+        repository: tedd-an/bluez
+        path: bluez
+
+    - name: CI
+      uses: tedd-an/action-kernel-ci@dev
+      with:
+        src_path: src
+        bluez_path: bluez
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        email_token: ${{ secrets.EMAIL_TOKEN }}
+
+    - uses: actions/upload-artifact@v2
+      with:
+        name: results
+        path: results.tar.gz
