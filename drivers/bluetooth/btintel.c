@@ -32,6 +32,11 @@ struct cmd_write_boot_params {
 	u8  fw_build_yy;
 } __packed;
 
+struct intel_offload_usecases {
+	__u8	status;
+	__u8	preset[8];
+} __packed;
+
 int btintel_check_bdaddr(struct hci_dev *hdev)
 {
 	struct hci_rp_read_bd_addr *bda;
@@ -1271,6 +1276,87 @@ int btintel_set_debug_features(struct hci_dev *hdev,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(btintel_set_debug_features);
+
+int btintel_read_offload_usecases(struct hci_dev *hdev)
+{
+	struct sk_buff *skb;
+	struct intel_offload_usecases *usecases;
+
+	skb = __hci_cmd_sync(hdev, 0xfc86, 0, NULL, HCI_INIT_TIMEOUT);
+	if (IS_ERR(skb)) {
+		bt_dev_err(hdev, "Reading offload usecases failed (%ld)",
+			   PTR_ERR(skb));
+		return PTR_ERR(skb);
+	}
+	usecases = (void *)skb->data;
+	if (usecases->status)
+		goto error;
+
+	if (usecases->preset[0] & 0x03)
+		set_bit(HCI_QUIRK_HFP_OFFLOAD_CODECS_SUPPORTED, &hdev->quirks);
+error:
+	kfree_skb(skb);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(btintel_read_offload_usecases);
+
+int btintel_get_data_path_id(struct hci_dev *hdev)
+{
+	if (!test_bit(HCI_QUIRK_HFP_OFFLOAD_CODECS_SUPPORTED, &hdev->quirks))
+		return -EOPNOTSUPP;
+	return 1;
+}
+EXPORT_SYMBOL_GPL(btintel_get_data_path_id);
+
+int btintel_configure_data_path(struct hci_dev *hdev, __u8 type,
+				struct bt_codec *codec)
+{
+	__u8 preset;
+	struct hci_op_configure_data_path *cmd;
+	__u8 buffer[255];
+	struct sk_buff *skb;
+
+	if (type != SCO_LINK && type != ESCO_LINK)
+		return -EINVAL;
+
+	switch (codec->id) {
+	case 0x02:
+		preset = 0x00;
+	break;
+	case 0x05:
+		preset = 0x01;
+	break;
+	default:
+		return -EINVAL;
+	}
+
+	cmd = (void *)buffer;
+	cmd->data_path_id = 0x01;
+	cmd->len = 1;
+	cmd->data[0] = preset;
+
+	cmd->direction = 0x00;
+	skb = __hci_cmd_sync(hdev, HCI_CONFIGURE_DATA_PATH, sizeof(*cmd) + 1,
+			     cmd, HCI_INIT_TIMEOUT);
+	if (IS_ERR(skb)) {
+		bt_dev_err(hdev, "configure input data path failed (%ld)",
+			   PTR_ERR(skb));
+		return PTR_ERR(skb);
+	}
+	kfree_skb(skb);
+
+	cmd->direction = 0x01;
+	skb = __hci_cmd_sync(hdev, HCI_CONFIGURE_DATA_PATH, sizeof(*cmd) + 1,
+			     cmd, HCI_INIT_TIMEOUT);
+	if (IS_ERR(skb)) {
+		bt_dev_err(hdev, "configure output data path failed (%ld)",
+			   PTR_ERR(skb));
+		return PTR_ERR(skb);
+	}
+	kfree_skb(skb);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(btintel_configure_data_path);
 
 MODULE_AUTHOR("Marcel Holtmann <marcel@holtmann.org>");
 MODULE_DESCRIPTION("Bluetooth support for Intel devices ver " VERSION);
