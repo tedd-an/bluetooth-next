@@ -1032,9 +1032,6 @@ int btintel_download_firmware(struct hci_dev *hdev,
 		/* Skip version checking */
 		break;
 	default:
-		/* Skip reading firmware file version in bootloader mode */
-		if (ver->fw_variant == 0x06)
-			break;
 
 		/* Skip download if firmware has the same version */
 		if (btintel_firmware_version(hdev, ver->fw_build_num,
@@ -1075,19 +1072,16 @@ int btintel_download_firmware_newgen(struct hci_dev *hdev,
 	int err;
 	u32 css_header_ver;
 
-	/* Skip reading firmware file version in bootloader mode */
-	if (ver->img_type != 0x01) {
-		/* Skip download if firmware has the same version */
-		if (btintel_firmware_version(hdev, ver->min_fw_build_nn,
-					     ver->min_fw_build_cw,
-					     ver->min_fw_build_yy,
-					     fw, boot_param)) {
-			bt_dev_info(hdev, "Firmware already loaded");
-			/* Return -EALREADY to indicate that firmware has
-			 * already been loaded.
-			 */
-			return -EALREADY;
-		}
+	/* Skip download if firmware has the same version */
+	if (btintel_firmware_version(hdev, ver->min_fw_build_nn,
+				     ver->min_fw_build_cw,
+				     ver->min_fw_build_yy,
+				     fw, boot_param)) {
+		bt_dev_info(hdev, "Firmware already loaded");
+		/* Return -EALREADY to indicate that firmware has
+		 * already been loaded.
+		 */
+		return -EALREADY;
 	}
 
 	/* The firmware variant determines if the device is in bootloader
