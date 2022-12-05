@@ -3925,6 +3925,7 @@ void hci_req_cmd_complete(struct hci_dev *hdev, u16 opcode, u8 status,
 			  hci_req_complete_t *req_complete,
 			  hci_req_complete_skb_t *req_complete_skb)
 {
+	struct sk_buff_head tmp;
 	struct sk_buff *skb;
 	unsigned long flags;
 
@@ -3970,6 +3971,7 @@ void hci_req_cmd_complete(struct hci_dev *hdev, u16 opcode, u8 status,
 	}
 
 	/* Remove all pending commands belonging to this request */
+	skb_queue_head_init(&tmp);
 	spin_lock_irqsave(&hdev->cmd_q.lock, flags);
 	while ((skb = __skb_dequeue(&hdev->cmd_q))) {
 		if (bt_cb(skb)->hci.req_flags & HCI_REQ_START) {
@@ -3981,9 +3983,11 @@ void hci_req_cmd_complete(struct hci_dev *hdev, u16 opcode, u8 status,
 			*req_complete_skb = bt_cb(skb)->hci.req_complete_skb;
 		else
 			*req_complete = bt_cb(skb)->hci.req_complete;
-		kfree_skb(skb);
+		__skb_queue_tail(&tmp, skb);
 	}
 	spin_unlock_irqrestore(&hdev->cmd_q.lock, flags);
+
+	__skb_queue_purge(&tmp);
 }
 
 static void hci_rx_work(struct work_struct *work)
