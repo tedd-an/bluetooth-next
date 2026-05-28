@@ -1638,9 +1638,6 @@ static int btintel_pcie_config_pcie(struct pci_dev *pdev,
 	if (err)
 		return err;
 
-	/* Configure MSI-X with causes list */
-	btintel_pcie_config_msix(data);
-
 	return 0;
 }
 
@@ -2651,6 +2648,14 @@ static int btintel_pcie_probe(struct pci_dev *pdev,
 	if (err)
 		goto exit_error;
 
+	err = btintel_pcie_reset_bt(data);
+	if (err) {
+		dev_err(&pdev->dev, "Bluetooth shared HW reset failed (%d)\n", err);
+		goto exit_error;
+	}
+
+	/* Configure MSI-X with causes list */
+	btintel_pcie_config_msix(data);
 	pci_set_drvdata(pdev, data);
 
 	err = btintel_pcie_alloc(data);
