@@ -1100,6 +1100,7 @@ static void btusb_reset(struct hci_dev *hdev)
 
 	bt_dev_err(hdev, "Resetting usb device.");
 	usb_queue_reset_device(data->intf);
+	usb_autopm_put_interface(data->intf);
 }
 
 static void btusb_intel_reset(struct hci_dev *hdev)
@@ -3081,6 +3082,7 @@ static int btusb_mtk_reset(struct hci_dev *hdev, void *rst_data)
 
 	usb_queue_reset_device(data->intf);
 	clear_bit(BTMTK_HW_RESET_ACTIVE, &btmtk_data->flags);
+	usb_autopm_put_interface(data->intf);
 
 	return err;
 }
