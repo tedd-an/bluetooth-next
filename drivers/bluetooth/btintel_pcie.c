@@ -274,128 +274,6 @@ static inline bool btintel_pcie_dbg_to_wifi(struct btintel_pcie_data *data)
 	return data->dbg_path_cache != BTINTEL_PCIE_DRAM;
 }
 
-/* Name of the optional INI file used to override the default dbg_path
- * (data->dbg_path_cache), yoyo ini settings and runtime log_mask.
- */
-#define BTINTEL_PCIE_DBG_INI_FILE "ibt_bt_dbg_cfg.ini"
-
-/* Loads optional "DBG_PATH=<value>", "ENABLE_INI=<value>" and "LOG_MASK=<value>"
- * overrides from BTINTEL_PCIE_DBG_INI_FILE
- * and applies them to data->dbg_path_cache, data->enable_ini and data->log_mask.
- *
- * DBG_PATH accepts BTINTEL_PCIE_WIFI_DBGC (0x06, default) and
- * BTINTEL_PCIE_DRAM (0x01, legacy); an invalid or missing entry leaves
- * the cached value set by the caller unchanged.
- *
- * ENABLE_INI accepts 1 (enabled) or 0 (disabled); an invalid or missing
- * entry leaves data->enable_ini unchanged.
- *
- * LOG_MASK accepts any u32 bitmask (see BTINTEL_PCIE_DUMP_TX and friends).
- * The default enables alive interrupt and Sx logging; an invalid or missing
- * entry leaves data->log_mask unchanged.
- */
-static void btintel_pcie_load_dbg_path_from_ini(struct btintel_pcie_data *data)
-{
-	const struct firmware *fw;
-	const char *ini_file = BTINTEL_PCIE_DBG_INI_FILE;
-	char *buf, *cursor, *line;
-	bool dbg_path_applied = false;
-	bool log_mask_applied = false;
-	int err;
-
-	err = request_firmware_direct(&fw, ini_file, &data->pdev->dev);
-	if (err < 0) {
-		BT_DBG("%s not found (%d), using dbg_path=0x%02x log_mask=0x%08x",
-		       ini_file, err, data->dbg_path_cache, data->log_mask);
-		if (data->dbg_path_cache != BTINTEL_PCIE_DRAM)
-			data->enable_ini = false;
-		return;
-	}
-
-	buf = kmemdup_nul(fw->data, fw->size, GFP_KERNEL);
-	release_firmware(fw);
-	if (!buf)
-		return;
-
-	cursor = buf;
-	while ((line = strsep(&cursor, "\n"))) {
-		char *eq;
-		char *val;
-		uint parsed;
-
-		line = strim(line);
-		if (!line[0] || line[0] == '#' || line[0] == ';')
-			continue;
-
-		eq = strchr(line, '=');
-		if (!eq)
-			continue;
-
-		*eq = '\0';
-		line = strim(line);
-		val = strim(eq + 1);
-
-		/* Keys are case-insensitive. */
-		if (!strcasecmp(line, "DBG_PATH")) {
-			BT_INFO("Read DBG_PATH from %s: '%s'", ini_file, val);
-
-			/* base 0 lets kstrtouint accept "0x06", "6", etc. */
-			if (kstrtouint(val, 0, &parsed) == 0 &&
-			    (parsed == BTINTEL_PCIE_DRAM ||
-			     parsed == BTINTEL_PCIE_WIFI_DBGC)) {
-				data->dbg_path_cache = parsed;
-				dbg_path_applied = true;
-				BT_INFO("WRT dbg_path accepted: 0x%02x",
-					data->dbg_path_cache);
-			} else {
-				BT_WARN("Invalid DBG_PATH='%s' in %s, using dbg_path=0x%02x",
-					val, ini_file, data->dbg_path_cache);
-			}
-		} else if (!strcasecmp(line, "LOG_MASK")) {
-			BT_INFO("Read LOG_MASK from %s: '%s'", ini_file, val);
-
-			if (kstrtouint(val, 0, &parsed) == 0) {
-				data->log_mask = parsed;
-				log_mask_applied = true;
-				BT_INFO("WRT log_mask accepted: 0x%08x",
-					data->log_mask);
-			} else {
-				BT_WARN("Invalid LOG_MASK='%s' in %s, using log_mask=0x%08x",
-					val, ini_file, data->log_mask);
-			}
-		} else if (!strcasecmp(line, "ENABLE_INI")) {
-			BT_INFO("Read ENABLE_INI from %s: '%s'", ini_file, val);
-
-			if (kstrtouint(val, 0, &parsed) == 0 &&
-			    (parsed == 0 || parsed == 1)) {
-				data->enable_ini = !!parsed;
-				BT_INFO("WRT enable_ini accepted: %u",
-					data->enable_ini);
-			} else {
-				BT_WARN("Invalid ENABLE_INI='%s' in %s, using enable_ini=%u",
-					val, ini_file, data->enable_ini);
-			}
-		}
-	}
-
-	if (data->dbg_path_cache != BTINTEL_PCIE_DRAM)
-		data->enable_ini = false;
-
-	if (dbg_path_applied)
-		BT_DBG("Loaded dbg_path=0x%02x from %s", data->dbg_path_cache, ini_file);
-	else
-		BT_WARN("No valid DBG_PATH in %s, dbg_path=0x%02x", ini_file, data->dbg_path_cache);
-
-	BT_DBG("ENABLE_INI effective state: %u", data->enable_ini);
-
-	if (log_mask_applied)
-		BT_DBG("Loaded log_mask=0x%08x from %s", data->log_mask, ini_file);
-	else
-		BT_DBG("No valid LOG_MASK in %s, log_mask=0x%08x", ini_file, data->log_mask);
-
-	kfree(buf);
-}
-
 /* Helper function to allocate and setup a debug buffer group
  * @data: driver data structure
  * @buf: pointer to data_buf array pointer
@@ -3076,6 +2954,14 @@ static void btintel_pcie_hw_rfkill_delay_work(struct work_struct *wk)
 	if (!test_bit(BTINTEL_PCIE_SETUP_DONE, &data->flags))
 		return;
 
+	/* Intentional: with the fatal error test mode enabled, the post-setup
+	 * injection consumes this rfkill pass, so the initial rfkill check is
+	 * deferred to the next pass. This avoids a second, back-to-back
+	 * injection while the recovery caused by the first one is running.
+	 */
+	if (btintel_pcie_fatal_err_post_setup_pending(data))
+		return;
+
 	/* Do not report an initial clear when rfkill was never asserted.
 	 * After resume, however, a previously asserted rfkill must be
 	 * cleared and reported to the HCI stack.
@@ -3090,10 +2976,18 @@ static void btintel_pcie_hw_rfkill_delay_work(struct work_struct *wk)
 		     !(ipc_ctrl & BTINTEL_PCIE_CSR_IPC_CONTROL_HW_RFKILL);
 	if (set_rfkill) {
 		bt_dev_dbg(data->hdev, "hw rfkill on");
+		/* Fatal error test mode: inject on every rfkill assertion seen
+		 * here, not only on a transition. A work run queued behind the
+		 * post-setup injection may inject once more.
+		 */
+		if (btintel_pcie_fatal_err_handle_rfkill(data, true))
+			return;
 		set_bit(BTINTEL_PCIE_HWRFKILL_ON, &data->flags);
 		hci_rfkill_set_hw_state(data->hdev, true);
 	} else {
 		bt_dev_dbg(data->hdev, "hw rfkill off");
+		if (btintel_pcie_fatal_err_handle_rfkill(data, false))
+			return;
 		/* Nothing changed at the initial post-setup check, so there
 		 * is no transition to report.
 		 */
@@ -3672,7 +3566,15 @@ exit_error:
 
 static int btintel_pcie_open(struct hci_dev *hdev)
 {
+	struct btintel_pcie_data *data = hci_get_drvdata(hdev);
+
 	bt_dev_dbg(hdev, "");
+
+	/* Fatal error test mode: send the post-setup injection that was
+	 * deferred because HCI was down.
+	 */
+	if (test_bit(BTINTEL_PCIE_FATAL_ERR_POST_SETUP_PENDING, &data->flags))
+		btintel_delayed_hw_rfkill(data, true);
 
 	return 0;
 }
@@ -4043,6 +3945,12 @@ static int btintel_pcie_setup_internal(struct hci_dev *hdev,
 		goto exit_error;
 	}
 
+	/* ver_tlv holds the operational firmware version after setup. A
+	 * locked platform with the unlocker loaded can run the test mode.
+	 */
+	btintel_pcie_fatal_err_check_api_lock(data, ver_tlv.api_lock &&
+					      !btintel_test_flag(hdev, INTEL_UNLOCKER_LOADED));
+
 	data->dmp_hdr.cnvi_top = ver_tlv.cnvi_top;
 	data->dmp_hdr.cnvr_top = ver_tlv.cnvr_top;
 	data->dmp_hdr.fw_timestamp = ver_tlv.timestamp;
@@ -4068,6 +3976,8 @@ static int btintel_pcie_setup(struct hci_dev *hdev)
 	int err, fw_dl_retry = 0;
 	struct btintel_pcie_data *data = hci_get_drvdata(hdev);
 	bool fips_crc_failed;
+
+	btintel_pcie_fatal_err_load(data);
 
 	while ((err = btintel_pcie_setup_internal(hdev, &fips_crc_failed)) &&
 	       fw_dl_retry++ < 1) {
@@ -4097,6 +4007,12 @@ static int btintel_pcie_setup(struct hci_dev *hdev)
 	}
 
 	if (!err) {
+		/* Fatal error test mode: arm the post-setup injection before
+		 * SETUP_DONE so the rfkill work cannot inject a fault ahead of
+		 * it.
+		 */
+		if (btintel_pcie_fatal_err_testmode_active(data))
+			set_bit(BTINTEL_PCIE_FATAL_ERR_POST_SETUP_PENDING, &data->flags);
 		set_bit(BTINTEL_PCIE_SETUP_DONE, &data->flags);
 		set_bit(BTINTEL_PCIE_HW_RFKILL_STATE_CHECK, &data->flags);
 		btintel_pcie_unmask_hw_rfkill(data);
@@ -4689,6 +4605,7 @@ static int btintel_pcie_probe(struct pci_dev *pdev,
 	data->img_resp_cache = 0x00;
 	data->dbg_path_cache = BTINTEL_PCIE_WIFI_DBGC;
 	data->log_mask = BTINTEL_PCIE_LOG_ALIVE_INTR | BTINTEL_PCIE_LOG_SX;
+	btintel_pcie_fatal_err_init(data);
 	data->pcie_alloc_init = false;
 	data->enable_ini = false;
 	btintel_pcie_yoyo_init(&data->yoyo);
